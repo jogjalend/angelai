@@ -1,0 +1,6 @@
+{
+  "name": "angelai",
+  "dependencies": {
+    "@neondatabase/serverless": "^0.10.0"
+  }
+}
