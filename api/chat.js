@@ -1,12 +1,15 @@
-// AngelAI Dual Mode - Formal & Alter & Alter 100%
+// AngelAI Dual Mode - Formal & Alter & Alter 100% - FULLFIX
 import { neon } from '@neondatabase/serverless';
 
 export default async function handler(req, res) {
   if (req.method !== 'POST') return res.status(405).json({ error: 'Method not allowed' });
   const { message, chatId, mode } = req.body;
+
+  if (!message) return res.status(200).json({ reply: 'Ketik sesuatu dulu dong beb' });
+
   let sql = null;
   try { sql = neon(process.env.DATABASE_URL); } catch(e) {}
-  try { if(sql) await sql`INSERT INTO messages (chat_id, role, content) VALUES (${String(chatId)}, 'user', ${message})`; } catch(e) {}
+  try { if(sql) await sql`INSERT INTO messages (chat_id, role, content) VALUES (${String(chatId || 'anon')}, 'user', ${message})`; } catch(e) {}
 
   let systemPrompt = '';
   if (mode === 'alter100') {
@@ -17,31 +20,61 @@ export default async function handler(req, res) {
     systemPrompt = `Kamu adalah AngelAI mode FORMAL / PROFESIONAL. Profesional, rapi, expert bisnis & coding. Bahasa Indonesia formal, struktur rapi dengan bullet point. Keahlian: strategi jualan, marketing, copywriting, branding, HTML, CSS, JavaScript, Python, Next.js, Vercel, database. Kamu adalah AngelAI, asisten pribadi dari Yogyakarta.`;
   }
 
-  const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
-    method: 'POST',
-    headers: {
-      'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
-      'Content-Type': 'application/json',
-      'HTTP-Referer': 'https://angelai.vercel.app',
-      'X-Title': 'AngelAI'
-    },
-    body: JSON.stringify({
-      model: 'meta-llama/llama-3.3-70b-instruct:free',
-      messages: [
-        { role: 'system', content: systemPrompt },
-        { role: 'user', content: message }
-      ]
-    })
-  });
+  // Daftar model gratis yang masih hidup per Nov 2026, diurutkan dari yang paling bagus
+  const models = [
+    'openrouter/free',
+    'nvidia/nemotron-3-ultra-550b-a55b:free',
+    'google/gemma-4-31b-it:free',
+    'google/gemma-4-26b-a4b-it:free',
+    'nvidia/nemotron-3.5-lightning:free',
+    'cohere/north-mini-code:free',
+    'liquid/lfm-3-1.7b:free'
+  ];
 
-  const data = await response.json();
-  console.log('OpenRouter status:', response.status, JSON.stringify(data).slice(0, 500));
+  let reply = '';
+  let lastError = '';
 
-  if (!response.ok) {
-    return res.status(200).json({ reply: 'AngelAI lagi sibuk, coba lagi ya. (Error: ' + (data.error?.message || response.status) + ')' });
+  for (const model of models) {
+    try {
+      const response = await fetch('https://openrouter.ai/api/v1/chat/completions', {
+        method: 'POST',
+        headers: {
+          'Authorization': `Bearer ${process.env.OPENROUTER_API_KEY}`,
+          'Content-Type': 'application/json',
+          'HTTP-Referer': 'https://angelai.vercel.app',
+          'X-Title': 'AngelAI'
+        },
+        body: JSON.stringify({
+          model: model,
+          messages: [
+            { role: 'system', content: systemPrompt },
+            { role: 'user', content: message }
+          ]
+        })
+      });
+
+      const data = await response.json();
+
+      if (response.ok && data.choices?.[0]?.message?.content) {
+        reply = data.choices[0].message.content;
+        console.log('Sukses pake model:', model);
+        break;
+      } else {
+        lastError = data.error?.message || ('HTTP ' + response.status);
+        console.log('Model gagal:', model, lastError);
+        continue;
+      }
+    } catch (e) {
+      lastError = e.message;
+      console.log('Model error:', model, lastError);
+      continue;
+    }
   }
 
-  const reply = data.choices?.[0]?.message?.content || 'AngelAI lagi sibuk, coba lagi ya.';
-  try { if(sql) await sql`INSERT INTO messages (chat_id, role, content) VALUES (${String(chatId)}, 'assistant', ${reply})`; } catch(e) {}
+  if (!reply) {
+    reply = 'AngelAI lagi sibuk, coba lagi ya. (Error: ' + lastError + ')';
+  }
+
+  try { if(sql) await sql`INSERT INTO messages (chat_id, role, content) VALUES (${String(chatId || 'anon')}, 'assistant', ${reply})`; } catch(e) {}
   res.status(200).json({ reply });
 }
